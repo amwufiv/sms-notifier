@@ -8,7 +8,7 @@ export default {
 		}
 		const param = JSON.parse(await request.text());
 		if (param.pass != env.PASS) {
-			return new Response(param, { status: 403 });
+			return new Response("no auth", { status: 403 });
 		}
 		const kafka = new Kafka({
 			url: env.UPSTASH_KAFKA_REST_URL,
@@ -18,9 +18,17 @@ export default {
 		const topic = "sms";
 		if (new URL(request.url).pathname == "/send") {
 			// send msg
+			const crypto = require("webcrypto");
+			const cipher = crypto.createCipheriv(
+				"aes-256-cbc",
+				env.AES_KEY,
+				Buffer.alloc(16, 0)
+			);
 			const msg = param.msg;
+			let encrypted = cipher.update(msg, 'utf8','hex')
+			encrypted += cipher.final('hex');
 			const p = kafka.producer();
-			ctx.waitUntil(p.produce(topic, msg));
+			ctx.waitUntil(p.produce(topic, encrypted));
 			const data = {
 				code: 200,
 				msg: "ok!"
@@ -35,9 +43,16 @@ export default {
 				topics: ["sms"],
 				autoOffsetReset: "earliest",
 			});
-			// return new Response(JSON.stringify(messages, null, 2));
+			const crypto = require("webcrypto");
+			const decipher = crypto.createDecipheriv(
+				"aes-256-cbc",
+				env.AES_KEY,
+				Buffer.alloc(16, 0)                                                           
+			);
 			const data = messages.map(item => {
-				const parts = item.value.split("\n");
+				let decrypted = decipher.update(item.value, 'hex', 'utf8')
+				decrypted += decipher.final('utf8')
+				const parts = decrypted.split("\n");
 				const o = {
 					sender: parts[0],
 					time: parts[1],
@@ -45,7 +60,7 @@ export default {
 				};
 				return o;
 			});
-		
+
 			return new Response(JSON.stringify(data));
 		}
 		else {
